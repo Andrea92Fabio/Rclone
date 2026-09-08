@@ -1,0 +1,94 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "rclone-migration.fullname" . }}-{{ .Values.rclone.mode }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "rclone-migration.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    phase: {{ .Values.rclone.mode }}
+spec:
+  backoffLimit: {{ .Values.rclone.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "rclone-migration.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        phase: {{ .Values.rclone.mode }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: rclone-runner
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["rclone"]
+          args:
+            - "--config="
+            - "{{ .Values.rclone.mode }}"
+            - "-P"
+            {{- if .Values.rclone.dryRun }}
+            - "--dry-run"
+            {{- end }}
+            {{- if eq .Values.rclone.mode "sync" }}
+            - "--delete-after"
+            {{- end }}
+            - "--no-check-certificate"
+            - "--transfers={{ .Values.rclone.transfers }}"
+            - "--checkers={{ .Values.rclone.checkers }}"
+            - "--fast-list"
+            {{- if .Values.rclone.ignoreErrors }}
+            - "--ignore-errors"
+            {{- end }}
+            {{- if .Values.rclone.disableMultiThread }}
+            - "--multi-thread-streams=0"
+            {{- end }}
+            {{- if .Values.rclone.verbose }}
+            - "-v"
+            {{- end }}
+            - "minio_source:{{ .Values.minio.bucket }}"
+            - "garage_dest:{{ .Values.garage.bucket }}"
+          resources:
+            requests:
+              cpu: "{{ .Values.resources.requests.cpu }}"
+              memory: "{{ .Values.resources.requests.memory }}"
+            limits:
+              cpu: "{{ .Values.resources.limits.cpu }}"
+              memory: "{{ .Values.resources.limits.memory }}"
+          env:
+            - name: RCLONE_CONFIG_MINIO_SOURCE_TYPE
+              value: "s3"
+            - name: RCLONE_CONFIG_MINIO_SOURCE_PROVIDER
+              value: "Minio"
+            - name: RCLONE_CONFIG_MINIO_SOURCE_ENV_AUTH
+              value: "false"
+            - name: RCLONE_CONFIG_MINIO_SOURCE_ENDPOINT
+              value: "{{ .Values.minio.endpoint }}"
+            - name: RCLONE_CONFIG_MINIO_SOURCE_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.secretName }}
+                  key: access_key_id
+            - name: RCLONE_CONFIG_MINIO_SOURCE_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.secretName }}
+                  key: secret_access_key
+            - name: RCLONE_CONFIG_GARAGE_DEST_TYPE
+              value: "s3"
+            - name: RCLONE_CONFIG_GARAGE_DEST_PROVIDER
+              value: "Other"
+            - name: RCLONE_CONFIG_GARAGE_DEST_ENV_AUTH
+              value: "false"
+            - name: RCLONE_CONFIG_GARAGE_DEST_REGION
+              value: "{{ .Values.garage.region }}"
+            - name: RCLONE_CONFIG_GARAGE_DEST_ENDPOINT
+              value: "{{ .Values.garage.endpoint }}"
+            - name: RCLONE_CONFIG_GARAGE_DEST_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.garage.secretName }}
+                  key: access_key_id
+            - name: RCLONE_CONFIG_GARAGE_DEST_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.garage.secretName }}
+                  key: secret_access_key
