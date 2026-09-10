@@ -1,0 +1,46 @@
+# Override opzionali per i nomi generati dagli helper
+nameOverride: ""
+fullnameOverride: ""
+
+# Namespace di destinazione nel cluster Kubernetes
+namespace: garage
+
+# Immagine Docker per Rclone
+image:
+  repository: rclone/rclone
+  tag: latest
+
+# Configurazione sorgente (Minio)
+minio:
+  bucket: "cardinalis-prod"
+  endpoint: "http://minio.minio-rgw.svc.cluster.local:80"
+  secretName: "minio-source-credentials"
+
+# Configurazione destinazione (Garage)
+garage:
+  bucket: "cardinalis-prod"
+  endpoint: "http://garage.garage.svc.cluster.local:3900"
+  region: "garage"
+  secretName: "garage-dest-credentials"
+
+# Parametri operativi Rclone
+rclone:
+  mode: "copy"                 # Valori supportati: "copy", "check", "sync"
+  dryRun: false                # Impostare a true per i test di simulazione
+  ignoreErrors: true           # `--ignore-errors`: ignora file temporanei/WAL eliminati sul sorgente
+  noTraverse: true             # `--no-traverse`: salta il listing della destinazione (utile solo se il bucket dest è vuoto/quasi vuoto, cioè in "copy")
+  disableMultiThread: true     # `--multi-thread-streams=0`: disattivato, storage NetApp con replica x3 non ne beneficia
+  verbose: false                # `-v`: dettaglio per-file nei log (pesante su tanti file, meglio stats)
+  stats: "30s"                  # `--stats`: intervallo di stampa del progresso aggregato
+  transfers: 32                 # confermato più veloce nei test
+  checkers: 64                  # confermato più veloce nei test
+  backoffLimit: 2
+
+# Allocazione risorse per il Pod
+resources:
+  requests:
+    cpu: "1000m"
+    memory: "1Gi"
+  limits:
+    cpu: "4000m"
+    memory: "4Gi"

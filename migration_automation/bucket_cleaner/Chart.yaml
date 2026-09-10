@@ -1,0 +1,6 @@
+apiVersion: v2
+name: bucket-cleaner
+description: Chart Helm polivalente per pulizia o eliminazione bucket S3 con Rclone
+type: application
+version: 0.1.0
+appVersion: "1.65.0"

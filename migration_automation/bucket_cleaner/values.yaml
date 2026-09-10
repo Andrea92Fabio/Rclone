@@ -1,0 +1,46 @@
+# Override opzionali per i nomi generati
+nameOverride: ""
+fullnameOverride: ""
+
+# Immagine Docker per rclone
+image:
+  repository: rclone/rclone
+  tag: latest
+
+# Namespace di destinazione nel cluster Kubernetes
+namespace: garage
+
+# Endpoint S3 globale e credenziali
+endpoint: "http://garage.garage.svc.cluster.local:3900" # Esempio MinIO o Garage
+
+# Configurazione del provider S3 per rclone
+# - Per Garage: provider: "Other", region: "garage"
+# - Per MinIO:  provider: "Minio", region: "us-east-1" (o vuota)
+s3:
+  provider: "Other"
+  region: "garage"
+
+# Target della pulizia / eliminazione
+target:
+  remote: "s3target"
+  bucket: "cnpg-bucket-eai-k8s02-kaas"
+  mode: "delete"                             # "delete" = svuota solo i file | "purge" = elimina bucket e file
+  confirmString: ""                          # Stringa di conferma di sicurezza
+  
+# Secret K8s contenente le credenziali S3
+secret:
+  name: "s3-target-credentials"
+
+# Parametri operativi di rclone
+rclone:
+  noCheckCertificate: "true"
+  verbose: true
+
+# Allocazione risorse per il Pod
+resources:
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"

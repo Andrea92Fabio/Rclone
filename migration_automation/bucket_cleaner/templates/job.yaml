@@ -1,0 +1,79 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "bucket-cleaner.fullname" . }}-{{ .Values.target.mode }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: bucket-cleaner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    cleaner-mode: {{ .Values.target.mode }}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bucket-cleaner
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: rclone-runner
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              if [ "{{ .Values.target.mode }}" = "delete" ]; then
+                EXPECTED="DELETE-{{ .Values.target.bucket }}-DATA"
+                ACTION="delete"
+                MSG="Svuotamento dati (mantenendo il bucket)"
+              elif [ "{{ .Values.target.mode }}" = "purge" ]; then
+                EXPECTED="PURGE-{{ .Values.target.bucket }}-PERMANENTLY"
+                ACTION="purge"
+                MSG="Eliminazione TOTALE (bucket + contenuti)"
+              else
+                echo "Modalità non valida: {{ .Values.target.mode }}. Usa 'delete' o 'purge'."
+                exit 1
+              fi
+
+              if [ "$CONFIRM" != "$EXPECTED" ]; then
+                echo "ERRORE: La stringa di conferma non corrisponde!"
+                echo "Atteso:   $EXPECTED"
+                echo "Ricevuto: $CONFIRM"
+                exit 1
+              fi
+
+              echo "Conferma validata. Avvio operazione [$MSG] su {{ .Values.target.remote }}:{{ .Values.target.bucket }}..."
+              FLAGS="-P"
+              {{- if eq (.Values.rclone.noCheckCertificate | toString) "true" }}
+              FLAGS="$FLAGS --no-check-certificate"
+              {{- end }}
+              {{- if .Values.rclone.verbose }}
+              FLAGS="$FLAGS -v"
+              {{- end }}
+              rclone $ACTION $FLAGS "{{ .Values.target.remote }}:{{ .Values.target.bucket }}"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: CONFIRM
+              value: "{{ .Values.target.confirmString }}"
+            - name: RCLONE_CONFIG_S3TARGET_TYPE
+              value: "s3"
+            - name: RCLONE_CONFIG_S3TARGET_PROVIDER
+              value: "{{ .Values.s3.provider }}"
+            - name: RCLONE_CONFIG_S3TARGET_REGION
+              value: "{{ .Values.s3.region }}"
+            - name: RCLONE_CONFIG_S3TARGET_ENV_AUTH
+              value: "false"
+            - name: RCLONE_CONFIG_S3TARGET_ENDPOINT
+              value: "{{ .Values.endpoint }}"
+            - name: RCLONE_CONFIG_S3TARGET_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name }}
+                  key: access_key_id
+            - name: RCLONE_CONFIG_S3TARGET_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name }}
+                  key: secret_access_key

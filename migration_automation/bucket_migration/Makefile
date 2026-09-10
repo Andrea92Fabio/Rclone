@@ -8,22 +8,14 @@ WAIT_SCRIPT := bash scripts/wait-for-job.sh
 export
 
 # ============================================================
-# Timeout (in secondi) per l'attesa di test/check. Override da
-# riga di comando, es: make check CHECK_TIMEOUT=60
-# copy e sync NON hanno timeout: possono muovere grandi quantità
-# di dati e restano in attesa fino a Complete o Failed del Job.
-# ============================================================
-TEST_TIMEOUT  ?= 180
-CHECK_TIMEOUT ?= 300
-
-# ============================================================
-# Namespace: letto direttamente da values.yaml (il Makefile non
-# lo genera/hardcoda da solo). Se manca, ci si ferma subito.
+# Namespace e Bucket: letti direttamente da values.yaml.
 # ============================================================
 NAMESPACE := $(shell awk -F': *' '/^namespace:/ {gsub(/"/,"",$$2); print $$2}' $(VALUES_FILE))
 ifeq ($(strip $(NAMESPACE)),)
 $(error ❌ Campo 'namespace' non trovato in $(VALUES_FILE). Verifica il file prima di procedere.)
 endif
+
+GET_BUCKET = $(shell awk '/^minio:/ {f=1; next} f && /^  bucket:/ {print $$2; exit} /^[^ ]/ {f=0}' $(VALUES_FILE) | tr -d '"')
 
 # ============================================================
 # Credenziali: DEVONO arrivare da config.env, nessun default.
@@ -53,15 +45,18 @@ test: secrets
 	helm install rclone-test $(CHART_DIR) -n $(NAMESPACE) \
 		--set rclone.mode=copy \
 		--set rclone.dryRun=true
-	@echo "--- Attesa completamento Test ---"
-	@$(WAIT_SCRIPT) rclone-test-rclone-migration-copy $(NAMESPACE) $(TEST_TIMEOUT); RC=$$?; \
-	BUCKET_NAME=$$(awk '/^minio:/ {f=1; next} f && /^  bucket:/ {print $$2; exit} /^[^ ]/ {f=0}' $(VALUES_FILE) | tr -d '"'); \
+	@echo "--- Attesa completamento Test e streaming log ---"
+	@kubectl logs -f -n $(NAMESPACE) -l app.kubernetes.io/instance=rclone-test --tail=20 & \
+	LOG_PID=$$!; \
+	$(WAIT_SCRIPT) rclone-test-rclone-migration-copy $(NAMESPACE) 0; RC=$$?; \
+	kill $$LOG_PID 2>/dev/null || true; \
+	BUCKET_NAME="$(call GET_BUCKET)"; \
 	if [ $$RC -eq 0 ]; then \
 		echo "" && echo "✅ TUTTO BENE: Test completato con successo per il bucket: $$BUCKET_NAME"; \
 	elif [ $$RC -eq 2 ]; then \
 		echo "" && echo "⏱️  TIMEOUT: il Job di test non si è concluso in tempo." && exit 1; \
 	else \
-		echo "" && echo "❌ ATTENZIONE: Il Job di test è fallito!" && exit 1; \
+		echo "" && echo "❌ ATTENZIONE: Il Job di test è fallito per il bucket: $$BUCKET_NAME!" && exit 1; \
 	fi
 
 copy: secrets
@@ -76,12 +71,13 @@ copy: secrets
 	LOG_PID=$$!; \
 	$(WAIT_SCRIPT) rclone-copy-rclone-migration-copy $(NAMESPACE) 0; RC=$$?; \
 	kill $$LOG_PID 2>/dev/null || true; \
+	BUCKET_NAME="$(call GET_BUCKET)"; \
 	if [ $$RC -eq 0 ]; then \
-		echo "" && echo "✅ TUTTO BENE: Copia massiva completata con successo!"; \
+		echo "" && echo "✅ TUTTO BENE: Copia massiva completata con successo per il bucket: $$BUCKET_NAME"; \
 	elif [ $$RC -eq 2 ]; then \
 		echo "" && echo "⏱️  TIMEOUT: la copia massiva non si è conclusa in tempo." && exit 1; \
 	else \
-		echo "" && echo "⚠️  NOTA: La copia massiva ha riscontrato anomalie sui file sorgente (ignorate), procediamo."; \
+		echo "" && echo "⚠️  NOTA: La copia massiva ha riscontrato anomalie sui file sorgente (ignorate) per il bucket: $$BUCKET_NAME."; \
 	fi
 
 sync: secrets
@@ -96,12 +92,13 @@ sync: secrets
 	LOG_PID=$$!; \
 	$(WAIT_SCRIPT) rclone-sync-rclone-migration-sync $(NAMESPACE) 0; RC=$$?; \
 	kill $$LOG_PID 2>/dev/null || true; \
+	BUCKET_NAME="$(call GET_BUCKET)"; \
 	if [ $$RC -eq 0 ]; then \
-		echo "" && echo "✅ TUTTO BENE: Allineamento finale (Sync) completato con successo!"; \
+		echo "" && echo "✅ TUTTO BENE: Allineamento finale (Sync) completato con successo per il bucket: $$BUCKET_NAME"; \
 	elif [ $$RC -eq 2 ]; then \
 		echo "" && echo "⏱️  TIMEOUT: il Sync finale non si è concluso in tempo." && exit 1; \
 	else \
-		echo "" && echo "⚠️  NOTA: Il Sync finale ha riscontrato anomalie minori (ignorate)."; \
+		echo "" && echo "⚠️  NOTA: Il Sync finale ha riscontrato anomalie minori (ignorate) per il bucket: $$BUCKET_NAME."; \
 	fi
 
 check: secrets
@@ -113,14 +110,15 @@ check: secrets
 	@echo "--- Attesa completamento Verifica e streaming log ---"
 	@kubectl logs -f -n $(NAMESPACE) -l app.kubernetes.io/instance=rclone-check --tail=20 & \
 	LOG_PID=$$!; \
-	$(WAIT_SCRIPT) rclone-check-rclone-migration-check $(NAMESPACE) $(CHECK_TIMEOUT); RC=$$?; \
+	$(WAIT_SCRIPT) rclone-check-rclone-migration-check $(NAMESPACE) 0; RC=$$?; \
 	kill $$LOG_PID 2>/dev/null || true; \
+	BUCKET_NAME="$(call GET_BUCKET)"; \
 	if [ $$RC -eq 0 ]; then \
-		echo "" && echo "✅ TUTTO BENE: Nessuna differenza trovata tra i bucket!"; \
+		echo "" && echo "✅ TUTTO BENE: Nessuna differenza trovata tra i bucket per: $$BUCKET_NAME!"; \
 	elif [ $$RC -eq 2 ]; then \
 		echo "" && echo "⏱️  TIMEOUT: la verifica non si è conclusa in tempo." && exit 1; \
 	else \
-		echo "" && echo "❌ ATTENZIONE: Rilevate differenze o problemi nella verifica!" && exit 1; \
+		echo "" && echo "❌ ATTENZIONE: Rilevate differenze o problemi nella verifica per il bucket: $$BUCKET_NAME!" && exit 1; \
 	fi
 
 clean:
@@ -130,4 +128,4 @@ clean:
 	-helm uninstall rclone-check -n $(NAMESPACE) --ignore-not-found
 	-helm uninstall rclone-sync -n $(NAMESPACE) --ignore-not-found
 	kubectl delete secret minio-source-credentials garage-dest-credentials -n $(NAMESPACE) --ignore-not-found
-	@echo "✓ Pulizia completata."
+	@echo "✓ Pulizia completata per il bucket: $$(awk '/^minio:/ {f=1; next} f && /^  bucket:/ {print $$2; exit} /^[^ ]/ {f=0}' $(VALUES_FILE) | tr -d '"')."

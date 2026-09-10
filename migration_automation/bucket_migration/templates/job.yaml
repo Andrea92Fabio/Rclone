@@ -35,6 +35,9 @@ spec:
             - "--transfers={{ .Values.rclone.transfers }}"
             - "--checkers={{ .Values.rclone.checkers }}"
             - "--fast-list"
+            {{- if and .Values.rclone.noTraverse (eq .Values.rclone.mode "copy") }}
+            - "--no-traverse"
+            {{- end }}
             {{- if .Values.rclone.ignoreErrors }}
             - "--ignore-errors"
             {{- end }}
@@ -43,6 +46,9 @@ spec:
             {{- end }}
             {{- if .Values.rclone.verbose }}
             - "-v"
+            {{- end }}
+            {{- if .Values.rclone.stats }}
+            - "--stats={{ .Values.rclone.stats }}"
             {{- end }}
             - "minio_source:{{ .Values.minio.bucket }}"
             - "garage_dest:{{ .Values.garage.bucket }}"
