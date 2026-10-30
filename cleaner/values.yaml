@@ -1,0 +1,66 @@
+# Override opzionali per i nomi generati dagli helper
+nameOverride: ""
+fullnameOverride: ""
+
+# Namespace di destinazione nel cluster Kubernetes (letto anche dal Makefile)
+namespace: garage
+
+# Immagine fissata per avere operazioni riproducibili.
+image:
+  repository: rclone/rclone
+  tag: "1.68"
+
+# Endpoint S3 dello storage .
+endpoint: " http://brodo:9000"
+
+s3:
+  # Provider rclone: "Other" (Garage, Ceph...), "Minio", "AWS", "Ceph"... (rclone help backend s3)
+  provider: "Other"
+  # Regione richiesta dallo storage (Garage: quella configurata in garage.toml; MinIO: us-east-1; AWS: la regione del bucket)
+  region: "garage"
+
+# NB: il Makefile legge `bucket` da questo blocco.
+target:
+  remote: "s3target"
+  bucket: "NOME BUCKET DA ELIMINARE"
+  # "count"  = conta soltanto gli oggetti, non modifica nulla
+  # "delete" = svuota il bucket (il bucket resta)
+  # "purge"  = svuota ed ELIMINA il bucket
+  mode: "count"
+  # Richiesta se mode = delete | purge. Il template la confronta con:
+  #   delete -> DELETE-<bucket>-DATA     purge -> PURGE-<bucket>-PERMANENTLY
+  # Il Makefile la imposta da solo dopo aver chiesto conferma a terminale.
+  confirmString: ""
+
+# NB: il Makefile legge `name` da questo blocco.
+secret:
+  name: "s3-target-credentials"
+
+rclone:
+  dryRun: false             # true = simulazione (con 1,5M oggetti scrive una riga di log per oggetto: meglio mode=count)
+
+  # rclone cancella un oggetto per richiesta, in parallelo: la velocita' dipende dai `checkers`.
+  checkers: 8               # parallelismo delle cancellazioni (alza a piccoli passi, guarda CPU dello storage)
+  transfers: 16             # non usato per la cancellazione, utile solo per listing/size
+  tpsLimit: 50              # richieste HTTP/sec complessive (0 = illimitato). Metti es. 1000 se lo storage e' condiviso
+  tpsBurst: 50
+
+  preCount: true            # false = salta il conteggio iniziale (risparmia un listing completo; la verifica finale resta)
+
+  cleanupMultipartAge: "1h" # rimuove upload multipart orfani prima di eliminare il bucket ("" = salta)
+
+  verbose: false            # `-v`: una riga per oggetto nei log (pesantissimo con 1,5M oggetti)
+  stats: "30s"              # intervallo di stampa del progresso
+  timeout: "300"            # secondi, timeout operazioni
+  contimeout: "60"          # secondi, timeout connessione
+  lowLevelRetries: 10
+
+# Con --fast-list rclone usa circa 1 GB di RAM per milione di oggetti:
+# i limiti sono dimensionati per bucket fino a ~3 milioni di oggetti.
+resources:
+  requests:
+    cpu: "1000m"
+    memory: "2Gi"
+  limits:
+    cpu: "4000m"
+    memory: "4Gi"

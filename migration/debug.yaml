@@ -1,0 +1,33 @@
+# Pod di utilita': entra con  kubectl exec -it rclone-debug -n garage -- sh
+# Remote disponibili: src: (sorgente) e dst: (destinazione). Rimuovi con: kubectl delete -f debug.yaml
+# Adatta namespace, endpoint, provider, region e nomi dei Secret a values.yaml.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rclone-debug
+  namespace: garage
+spec:
+  restartPolicy: Never
+  containers:
+    - name: rclone
+      image: rclone/rclone:1.68
+      command: ["sleep", "86400"]
+      resources:
+        requests: { cpu: "500m", memory: "1Gi" }
+        limits: { memory: "3Gi" }
+      env:
+        - { name: RCLONE_CONFIG_SRC_TYPE, value: "s3" }
+        - { name: RCLONE_CONFIG_SRC_PROVIDER, value: "Minio" }
+        - { name: RCLONE_CONFIG_SRC_ENDPOINT, value: "http://minio.minio-rgw.svc.cluster.local:80" }
+        - name: RCLONE_CONFIG_SRC_ACCESS_KEY_ID
+          valueFrom: { secretKeyRef: { name: s3-source-credentials, key: access_key_id } }
+        - name: RCLONE_CONFIG_SRC_SECRET_ACCESS_KEY
+          valueFrom: { secretKeyRef: { name: s3-source-credentials, key: secret_access_key } }
+        - { name: RCLONE_CONFIG_DST_TYPE, value: "s3" }
+        - { name: RCLONE_CONFIG_DST_PROVIDER, value: "Other" }
+        - { name: RCLONE_CONFIG_DST_REGION, value: "garage" }
+        - { name: RCLONE_CONFIG_DST_ENDPOINT, value: "http://garage.garage.svc.cluster.local:3900" }
+        - name: RCLONE_CONFIG_DST_ACCESS_KEY_ID
+          valueFrom: { secretKeyRef: { name: s3-destination-credentials, key: access_key_id } }
+        - name: RCLONE_CONFIG_DST_SECRET_ACCESS_KEY
+          valueFrom: { secretKeyRef: { name: s3-destination-credentials, key: secret_access_key } }

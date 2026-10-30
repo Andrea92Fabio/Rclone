@@ -1,0 +1,8 @@
+config.env
+config.env.example
+.git/
+.gitignore
+Makefile
+scripts/
+debug.yaml
+README.md

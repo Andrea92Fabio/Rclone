@@ -6,12 +6,18 @@
 # subito, invece di restare bloccato fino al timeout.
 #
 # Uso:   wait-for-job.sh <job-name> <namespace> [timeout-seconds]
-#        timeout-seconds = 0 (o omesso) -> nessun timeout, attende indefinitamente
+#        timeout-seconds = 0 -> nessun timeout, attende indefinitamente
+#        (se omesso, il default è 3600 secondi)
 # Exit:  0 = Job Complete
 #        1 = Job Failed
 #        2 = Timeout raggiunto senza esito
 
 set -uo pipefail
+
+if [ $# -lt 2 ]; then
+  echo "Uso: $0 <job-name> <namespace> [timeout-seconds]" >&2
+  exit 64
+fi
 
 JOB_NAME="$1"
 NAMESPACE="$2"

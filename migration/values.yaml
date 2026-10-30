@@ -1,0 +1,74 @@
+# Override opzionali per i nomi generati dagli helper
+nameOverride: ""
+fullnameOverride: ""
+
+# Namespace di destinazione nel cluster Kubernetes (letto anche dal Makefile)
+namespace: garage
+
+# Immagine Docker per Rclone: versione fissata per avere migrazioni riproducibili.
+image:
+  repository: rclone/rclone
+  tag: "1.68"
+
+# Sorgente: qualsiasi storage compatibile S3.
+# NB: il Makefile legge `bucket` e `secretName` da questo blocco, non cambiare la struttura.
+source:
+  bucket: "NOME BUCKET SORGENTE"
+  endpoint: "http://minio.minio-rgw.svc.cluster.local:80"
+  provider: "Minio"       # provider rclone: "Minio", "Other" (Garage, Ceph...), "AWS"... (rclone help backend s3)
+  region: ""              # lascia vuoto se lo storage non la richiede
+  secretName: "s3-source-credentials"
+
+# Destinazione: qualsiasi storage compatibile S3 (stessa struttura della sorgente).
+destination:
+  bucket: "NOME BUCKET DESTINAZIONE"
+  endpoint: "http://garage.garage.svc.cluster.local:3900"
+  provider: "Other"
+  region: "garage"
+  secretName: "s3-destination-credentials"
+
+# Parametri operativi Rclone
+rclone:
+  mode: "copy"            # "copy" | "check" | "sync" (di norma impostato dal Makefile)
+  dryRun: false           # true = simulazione, non modifica nulla
+
+  # --- Confronto tra sorgente e destinazione (copy e sync) ---
+  # "checksum": confronta l'ETag (MD5 per oggetti single-part) già presente nel listing, senza richieste extra.
+  #             Più sicuro: rileva anche file riscritti con la stessa dimensione.
+  # "size-only": confronta solo la dimensione. Da usare se `make test` mostra che quasi tutto
+  #             verrebbe ricopiato (ETag non MD5, es. cifratura SSE sulla sorgente).
+  compare: "checksum"
+
+  # --- Delta rapido (solo copy) ---
+  maxAge: ""              # es. "2h": copia solo gli oggetti modificati nelle ultime 2 ore (attiva --no-traverse)
+  noTraverse: false       # true solo se la destinazione è vuota o quasi (salta il listing della destinazione)
+
+  # --- Protezione degli applicativi ---
+  tpsLimit: 50           # richieste HTTP/sec complessive (0 = illimitato). Alza a piccoli passi.
+  tpsBurst: 20
+
+  # --- Protezione dalle cancellazioni (solo sync) ---
+  maxDelete: 1000         # il sync si ferma se dovrebbe cancellare più di N oggetti (0 = nessun limite)
+
+  # --- Verifica (solo check) ---
+  checkDownload: true     # true: scarica e confronta i byte (lento, rigoroso). false: nome + dimensione/hash (veloce).
+
+  disableMultiThread: true  # `--multi-thread-streams=0`
+  verbose: false            # `-v`: dettaglio per-file nei log (pesante su tanti file)
+  stats: "30s"              # intervallo di stampa del progresso
+  transfers: 8
+  checkers: 16
+  backoffLimit: 0           # 0 = nessun retry del Pod: un retry riparte da capo e carica il backend
+  timeout: "300"            # secondi, timeout operazioni
+  contimeout: "60"          # secondi, timeout connessione
+  lowLevelRetries: 10
+
+# Risorse del Pod. Con --fast-list rclone usa circa 1 GB di RAM per milione di oggetti:
+# i limiti sono dimensionati per bucket fino a ~3 milioni di oggetti.
+resources:
+  requests:
+    cpu: "1000m"
+    memory: "2Gi"
+  limits:
+    cpu: "4000m"
+    memory: "6Gi"

@@ -1,0 +1,157 @@
+{{- $mode := .Values.target.mode -}}
+{{- $bucket := .Values.target.bucket -}}
+{{- $remote := .Values.target.remote -}}
+{{- $remoteEnv := upper $remote | replace "-" "_" -}}
+{{- if not (has $mode (list "count" "delete" "purge")) -}}
+{{- fail (printf "target.mode non valido: '%s' (ammessi: count, delete, purge)" $mode) -}}
+{{- end -}}
+{{- if not $bucket -}}
+{{- fail "target.bucket e' vuoto" -}}
+{{- end -}}
+{{- $expected := "" -}}
+{{- if eq $mode "delete" -}}{{- $expected = printf "DELETE-%s-DATA" $bucket -}}{{- end -}}
+{{- if eq $mode "purge" -}}{{- $expected = printf "PURGE-%s-PERMANENTLY" $bucket -}}{{- end -}}
+{{- if and (ne $mode "count") (ne (toString .Values.target.confirmString) $expected) -}}
+{{- fail (printf "target.confirmString non valida per mode=%s (atteso: %s)" $mode $expected) -}}
+{{- end -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "bucket-cleaner.fullname" . }}-{{ $mode }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "bucket-cleaner.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    phase: {{ $mode }}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "bucket-cleaner.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        phase: {{ $mode }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: rclone-runner
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+
+              BUCKET="{{ $bucket }}"
+              REMOTE="{{ $remote }}:$BUCKET"
+              MODE="{{ $mode }}"
+
+              OPTS="--config= --fast-list"
+              OPTS="$OPTS --checkers={{ int .Values.rclone.checkers }}"
+              OPTS="$OPTS --transfers={{ int .Values.rclone.transfers }}"
+              OPTS="$OPTS --timeout={{ .Values.rclone.timeout }}s"
+              OPTS="$OPTS --contimeout={{ .Values.rclone.contimeout }}s"
+              OPTS="$OPTS --low-level-retries={{ int .Values.rclone.lowLevelRetries }}"
+              {{- if gt (int .Values.rclone.tpsLimit) 0 }}
+              OPTS="$OPTS --tpslimit={{ int .Values.rclone.tpsLimit }} --tpslimit-burst={{ int .Values.rclone.tpsBurst }}"
+              {{- end }}
+              {{- if .Values.rclone.stats }}
+              OPTS="$OPTS --stats={{ .Values.rclone.stats }} --stats-one-line"
+              {{- end }}
+              {{- if .Values.rclone.verbose }}
+              OPTS="$OPTS -v"
+              {{- end }}
+              {{- if .Values.rclone.dryRun }}
+              OPTS="$OPTS --dry-run"
+              echo "ATTENZIONE: --dry-run attivo, nulla viene modificato."
+              {{- end }}
+
+              count_objects() {
+                rclone size --json --config= --fast-list --stats={{ .Values.rclone.stats | default "30s" }} --stats-one-line "$REMOTE" | sed -n 's/.*"count":\([0-9]*\).*/\1/p'
+              }
+
+              {{- if eq $mode "count" }}
+
+              echo "=== Conteggio oggetti di $REMOTE (sola lettura) ==="
+              rclone size --config= --fast-list --stats=30s --stats-one-line "$REMOTE"
+              {{- else }}
+
+              echo "=== {{ if eq $mode "purge" }}ELIMINAZIONE TOTALE (oggetti + bucket){{ else }}SVUOTAMENTO (il bucket resta){{ end }}: $REMOTE ==="
+
+              {{- if .Values.rclone.preCount }}
+              echo "[1/4] Conteggio iniziale (elenca tutti gli oggetti: con 1,5M puo' richiedere qualche minuto)..."
+              BEFORE=$(count_objects)
+              if [ -z "$BEFORE" ]; then
+                echo "ERRORE: impossibile contare gli oggetti di $REMOTE (bucket inesistente o accesso negato?)."
+                exit 1
+              fi
+              echo "      Oggetti presenti: $BEFORE"
+              {{- else }}
+              BEFORE="n/d"
+              echo "[1/4] Conteggio iniziale saltato (rclone.preCount=false)."
+              {{- end }}
+
+              {{- if .Values.rclone.cleanupMultipartAge }}
+
+              echo "[2/4] Rimozione upload multipart orfani (piu' vecchi di {{ .Values.rclone.cleanupMultipartAge }})..."
+              rclone backend cleanup --config= {{ if .Values.rclone.dryRun }}--dry-run {{ end }}"$REMOTE" -o max-age={{ .Values.rclone.cleanupMultipartAge }} \
+                || echo "      AVVISO: cleanup multipart non riuscito o non supportato, proseguo."
+              {{- else }}
+
+              echo "[2/4] Pulizia multipart saltata (cleanupMultipartAge vuoto)."
+              {{- end }}
+
+              echo "[3/4] Cancellazione oggetti (checkers={{ int .Values.rclone.checkers }})..."
+              rclone delete $OPTS --rmdirs "$REMOTE"
+              {{- if eq $mode "purge" }}
+              echo "      Rimozione del bucket..."
+              rclone rmdir --config= {{ if .Values.rclone.dryRun }}--dry-run {{ end }}"$REMOTE"
+              {{- end }}
+
+              {{- if .Values.rclone.dryRun }}
+
+              echo "[4/4] Verifica saltata (dry-run)."
+              {{- else }}
+
+              echo "[4/4] Verifica finale..."
+              {{- if eq $mode "purge" }}
+              if rclone lsd --config= "{{ $remote }}:" | awk '{print $NF}' | grep -Fxq "$BUCKET"; then
+                echo "ERRORE: il bucket $BUCKET risulta ancora presente."
+                echo "        Se rmdir e' negato, elimina il bucket con gli strumenti di amministrazione dello storage (es. Garage: garage bucket delete --yes $BUCKET)"
+                exit 1
+              fi
+              echo "      Bucket $BUCKET non piu' presente."
+              {{- else }}
+              AFTER=$(count_objects)
+              if [ "$AFTER" != "0" ]; then
+                echo "ERRORE: restano $AFTER oggetti nel bucket (prima: $BEFORE). Rilancia il target."
+                exit 1
+              fi
+              echo "      Bucket vuoto (0 oggetti, prima: $BEFORE)."
+              {{- end }}
+              {{- end }}
+              {{- end }}
+
+              echo "OK: operazione '$MODE' completata."
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: RCLONE_CONFIG_{{ $remoteEnv }}_TYPE
+              value: "s3"
+            - name: RCLONE_CONFIG_{{ $remoteEnv }}_PROVIDER
+              value: "{{ .Values.s3.provider }}"
+            - name: RCLONE_CONFIG_{{ $remoteEnv }}_ENV_AUTH
+              value: "false"
+            - name: RCLONE_CONFIG_{{ $remoteEnv }}_REGION
+              value: "{{ .Values.s3.region }}"
+            - name: RCLONE_CONFIG_{{ $remoteEnv }}_ENDPOINT
+              value: "{{ .Values.endpoint }}"
+            - name: RCLONE_CONFIG_{{ $remoteEnv }}_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name }}
+                  key: access_key_id
+            - name: RCLONE_CONFIG_{{ $remoteEnv }}_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name }}
+                  key: secret_access_key

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: bucket-cleaner
+description: Helm chart per contare, svuotare o eliminare un bucket su qualsiasi storage compatibile S3 (Garage, MinIO, Ceph, AWS...) con rclone
+type: application
+version: 0.2.0
+appVersion: "1.68"
