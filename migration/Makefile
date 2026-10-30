@@ -37,7 +37,7 @@ endif
 
 RUN := bash $(SCRIPTS)/run-job.sh
 
-.PHONY: help guard secrets test copy delta sync-dry sync check status clean
+.PHONY: help guard secrets test copy delta sync-dry sync check status clean-job clean-all
 
 help:
 	@echo "Migrazione bucket '$(BUCKET)' (namespace '$(NAMESPACE)')"
@@ -50,7 +50,8 @@ help:
 	@echo "  make check      verifica finale (CHECK_DOWNLOAD=true: byte per byte, lento)"
 	@echo "  make status     stato di Job e release Helm"
 	@echo "  make secrets    crea/aggiorna i Secret S3 da config.env (RECREATE=1: cancella e ricrea)"
-	@echo "  make clean      ferma e rimuove release Helm e Secret"
+	@echo "  make clean-job  ferma e rimuove le release Helm (i Job); i Secret restano"
+	@echo "  make clean-all  come clean-job, e rimuove anche i Secret S3"
 	@echo ""
 	@echo "Opzioni:  AGE=6h  MAX_DELETE=N  CHECK_DOWNLOAD=false  CHECK_CHECKERS=N  RECREATE=1"
 	@echo "          HELM_EXTRA=\"--set rclone.tpsLimit=800 --set rclone.transfers=32\""
@@ -111,11 +112,15 @@ status:
 	@echo ""
 	@helm list -n $(NAMESPACE) --filter '^rclone-'
 
-# Ferma anche i Job in corso (helm uninstall elimina i Pod).
-clean:
-	@echo "--- Pulizia release Helm e Secret nel namespace '$(NAMESPACE)' ---"
+# Ferma anche i Job in corso (helm uninstall elimina i Pod). I Secret restano.
+clean-job:
+	@echo "--- Rimozione release Helm nel namespace '$(NAMESPACE)' ---"
 	-@for r in rclone-test rclone-copy rclone-delta rclone-sync-dry rclone-sync rclone-check; do \
 		helm uninstall $$r -n $(NAMESPACE) >/dev/null 2>&1 && echo "  rimossa release $$r"; \
 	done
+	@echo "✓ Release e Job rimossi (bucket $(BUCKET))."
+
+# Come clean-job, e in piu' rimuove i Secret S3.
+clean-all: clean-job
 	-@kubectl delete secret $(SRC_SECRET) $(DST_SECRET) -n $(NAMESPACE) --ignore-not-found
-	@echo "✓ Pulizia completata (bucket $(BUCKET))."
+	@echo "✓ Rimossi anche i Secret S3."

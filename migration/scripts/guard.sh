@@ -22,6 +22,6 @@ ACTIVE=$(printf '%s\n' "$OUT" | awk 'NF==2 && $2>0 {print $1}')
 if [ -n "$ACTIVE" ]; then
   echo "❌ Job rclone già in esecuzione nel namespace '$NS':" >&2
   printf '   %s\n' $ACTIVE >&2
-  echo "   Attendi che termini, oppure fermalo con 'make clean' (migrazione) o 'make clean-jobs' (bucket-cleaner)." >&2
+  echo "   Attendi che termini, oppure fermalo con 'make clean-job' (migrazione) o 'make clean-jobs' (bucket-cleaner)." >&2
   exit 1
 fi

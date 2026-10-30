@@ -34,7 +34,8 @@ con exit code diverso da 0 se il Job fallisce.
 | `check` | `rclone-check` | Confronta i due bucket in sola lettura |
 | `status` | | Stato di Job e release |
 | `secrets` | | Crea/aggiorna i Secret S3 da `config.env` (idempotente) |
-| `clean` | | Ferma i Job in corso, rimuove release e Secret |
+| `clean-job` | | Ferma i Job in corso e rimuove le release Helm. I Secret restano |
+| `clean-all` | | Come `clean-job`, e rimuove anche i Secret S3 |
 
 Opzioni da riga di comando:
 
@@ -49,15 +50,15 @@ make copy HELM_EXTRA="--set rclone.tpsLimit=800 --set rclone.transfers=32"   # q
 ## Protezioni integrate
 
 - **Guard**: ogni target si rifiuta di partire se c'è già un Job rclone attivo (migrazione o `bucket-cleaner`). Evita di uccidere un upload
-  a metà (oggetti e multipart orfani) e di lanciare due migrazioni sullo stesso bucket. Per fermare un Job: `make clean`.
+  a metà (oggetti e multipart orfani) e di lanciare due migrazioni sullo stesso bucket. Per fermare un Job: `make clean-job`.
 - **`maxDelete`** (default 1000): il `sync` si ferma senza cancellare nulla se dovrebbe eliminare più oggetti.
   Se `sync-dry` mostra un numero atteso di cancellazioni maggiore, alza il limite con `MAX_DELETE=N` solo dopo
   aver verificato l'elenco.
 - **`backoffLimit: 0`**: se il Pod muore non riparte da solo, perché un retry rifà tutto il lavoro e carica il backend.
   Si rilancia a mano.
 - **Niente `--ignore-errors`**: i file spariti dalla sorgente durante la copia generano errori che vanno letti nei log.
-- **`tpsLimit`** (default 400 richieste/s): limita il carico sugli storage di sorgente e destinazione per non penalizzare gli applicativi.
-  Alzalo a piccoli passi (400 → 800 → 1200) guardando la latenza degli applicativi.
+- **`tpsLimit`** (default 50 richieste/s): limita il carico sugli storage di sorgente e destinazione per non penalizzare gli applicativi.
+  Alzalo a piccoli passi (50 → 100 → 200 → 400) guardando la latenza degli applicativi.
 - **Template con validazione**: `rclone.mode` o `rclone.compare` non validi, o `maxAge` usato fuori da `copy`,
   fanno fallire `helm install` con un messaggio chiaro.
 
@@ -68,10 +69,10 @@ make copy HELM_EXTRA="--set rclone.tpsLimit=800 --set rclone.transfers=32"   # q
 | `rclone.compare` | `checksum` | `checksum`: confronta gli ETag già presenti nel listing (nessuna richiesta extra, rileva file riscritti con stessa dimensione; se l'hash non è confrontabile rclone ripiega sulla dimensione). `size-only`: solo dimensione. Usa `size-only` se `make test` vuole ricopiare quasi tutto (ETag non MD5, es. cifratura SSE) |
 | `rclone.maxAge` | `""` | Solo `copy`: limita ai file recenti e attiva `--no-traverse` |
 | `rclone.noTraverse` | `false` | `true` solo se la destinazione è vuota o quasi |
-| `rclone.tpsLimit` / `tpsBurst` | `400` / `50` | Richieste HTTP al secondo (0 = illimitato) |
+| `rclone.tpsLimit` / `tpsBurst` | `50` / `20` | Richieste HTTP al secondo (0 = illimitato) |
 | `rclone.maxDelete` | `1000` | Solo `sync` (0 = nessun limite) |
 | `rclone.checkDownload` | `true` | Solo `check`: `--download` confronta i byte |
-| `rclone.transfers` / `checkers` | `16` / `32` | Parallelismo |
+| `rclone.transfers` / `checkers` | `8` / `16` | Parallelismo |
 | `resources.limits.memory` | `6Gi` | Con `--fast-list` servono circa 1 GB ogni milione di oggetti |
 
 Per `copy` e `sync` il chart passa anche `--s3-no-head`, `--s3-no-check-bucket` e `--s3-disable-checksum`
@@ -88,8 +89,8 @@ e i contenuti sono identici.
 Perché il risultato sia valido: nessuno deve scrivere su sorgente o destinazione durante il check, va lanciato dopo
 `make sync`, e il Job deve concludersi in `Complete` (un timeout non è una conferma).
 
-Costo: legge tutto da entrambi i lati, due GET per oggetto. Con `tpsLimit: 400` e 1,5M oggetti servono circa
-2 ore: per un check lungo puoi alzare il limite a finestra di cutover chiusa
+Costo: legge tutto da entrambi i lati, due GET per oggetto. Con 1,5M oggetti sono circa 3M richieste: a `tpsLimit: 50`
+servono circa 17 ore, a 400 circa 2 ore (stime). Per un check lungo puoi alzare il limite a finestra di cutover chiusa
 (`HELM_EXTRA="--set rclone.tpsLimit=1500"`), oppure usare `CHECK_DOWNLOAD=false` per un controllo rapido.
 
 ## Prerequisiti
